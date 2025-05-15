@@ -1,6 +1,6 @@
 // checkValidity 정규식
 const EMAIL_REGEX = /^(?!\.)(?!.*\.\.)(?=.{5,320})[a-zA-Z\d.!#$%&'*+/=?^_{|}~-]{1,64}(?<!\.)@(?!-)(?!.*--)(?=.{3,255}$)([a-zA-Z\d-]{1,63}(?:\.[a-zA-Z\d-]{1,63})*(?<!-)\.[a-zA-Z]{1,63})$/
-const NICKNAME_REGEX = /^.{1,20}$/;
+const NICKNAME_REGEX = /^[^\s]{1,20}$/;
 const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{10,18}$/;
 const TITLE_REGEX = /^.{1,30}$/;
 const COMMENT_CONTENT_REGEX = /^.{1,300}$/;
