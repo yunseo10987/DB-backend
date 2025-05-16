@@ -1,6 +1,6 @@
 const router = require("express").Router();
 
-const psql = require("../../database/connect/postgre");
+const psql = require("../../database/postgre");
 
 const checkAuth = require("../midlewares/checkAuth");
 const checkValidity = require("../midlewares/checkValidity");

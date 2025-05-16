@@ -1,8 +1,8 @@
 const express = require("express");
 require("dotenv").config();
 
-const errorHandler = require("./src/middlewares/errorHandler");
-const notFoundApi = require("./src/middlewares/notFoundApi");
+const errorHandler = require("./src/midlewares/errorHandler");
+const notFoundApi = require("./src/midlewares/notFoundApi");
 
 const postsApi = require("./src/routes/posts");
 
@@ -10,7 +10,6 @@ const app = express();
 const port = process.env.HTTP_PORT;
 
 app.use(express.json());
-app.use("/users", usersApi);
 app.use("/posts", postsApi);
 
 app.use(notFoundApi);
