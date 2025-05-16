@@ -4,7 +4,8 @@ const {
     WHITESPACE_REGEX,
     PARAM_REGEX,
     TITLE_REGEX,
-    COMMENT_CONTENT_REGEX
+    COMMENT_CONTENT_REGEX,
+    QUERY_EMOTION_IDX
 } = require("../constants");
 
 const checkValidity = (data) => {
@@ -31,6 +32,8 @@ const checkValidity = (data) => {
                 }
 
                 if (regex.source === PARAM_REGEX.source) {
+                    req[source][item] = parseInt(req[source][item]);
+                } else if(regex.source === QUERY_EMOTION_IDX.source) {
                     req[source][item] = parseInt(req[source][item]);
                 } else if (stringFieldArray.includes(regex.source)) {
                     req[source][item] = value.replace(WHITESPACE_REGEX, ' ');
