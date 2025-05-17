@@ -5,47 +5,104 @@ const psql = require("../../database/postgre");
 const checkAuth = require("../midlewares/checkAuth");
 const checkValidity = require("../midlewares/checkValidity");
 const endRequestHandler = require("../modules/endRequestHandler");
+const makeToken = require("../modules/makeToken");
 
 const {
+    EMAIL_REGEX,PASSWORD_REGEX,
     PARAM_REGEX, TITLE_REGEX,
     COMMENT_CONTENT_REGEX,
     QUERY_REGEX} = require("../constants");
-const { NotFoundException, BadRequestException } = require("../model/customException");
+const { NotFoundException, BadRequestException, UnauthorizedException } = require("../model/customException");
+
+router.post("/login", checkValidity({[EMAIL_REGEX]: ["id"], [PASSWORD_REGEX]: ["pw"]}), endRequestHandler(async (req, res, next) => {
+  const { id, pw } = req.body;
+
+  const loginUser = (await psql.query(`SELECT idx, role FROM "user" WHERE email=$1 AND password=$2;`, [id, pw])).rows[0];
+
+  if (!loginUser) return next(new UnauthorizedException());
+
+  const accessToken = makeToken({
+    idx: loginUser.idx,
+    rank: loginUser.role,
+  });
+
+  return res.status(200).send({
+    token: accessToken
+  })
+})
+);
 
 //게시물 전체 보기
-router.get("/", checkValidity({[PARAM_REGEX]: ["page"], [QUERY_REGEX]: ["emotionIdx", "sort"]}), endRequestHandler(async(req, res, next) => {
+router.get("/", checkValidity({ [PARAM_REGEX]: ["page"], [QUERY_REGEX]: ["emotionIdx", "sort"] }), endRequestHandler(async (req, res, next) => {
     const { page, emotionIdx, sort } = req.query;
     const offset = (page - 1) * 10;
 
-    if(sort !== 0 && sort !== 1) return next(BadRequestException());
-    
+    const parsedSort = parseInt(sort);
+    const parsedEmotion = parseInt(emotionIdx);
 
+    if (parsedSort !== 1 && parsedSort !== 2) return next(new BadRequestException());
+
+    // 기본 정렬: 최신순
     let orderBy = "P.created_at DESC";
-    if(sort === 0) orderBy = `"likesCount" DESC`;
 
-    let whereEmotion = (emotionIdx !== -1) ? "WHERE P.emotion_idx = $1" : '';
+    // 조건문 분기
+    let whereConditions = [];
+    let values = [];
+    let valueIndex = 1;
 
-    const values = emotionIdx !== -1 ? [emotionIdx, offset] : [offset];
+    if (parsedEmotion !== -1) {
+        whereConditions.push(`P.emotion_idx = $${valueIndex++}`);
+        values.push(parsedEmotion);
+    }
 
-    const postList = await psql.query(`SELECT P.idx, P.title, P.created_at AS "createdAt",
-        (
-            SELECT COUNT(*) FROM post_likes PL
-            WHERE PL.post_idx = P.idx
-        ) AS "likesCount",
-        (
-            SELECT COUNT(*) FROM comment C 
-            WHERE C.post_idx = P.idx
-        ) AS "commentsCount" 
-        FROM post P ${whereEmotion}
+    if (parsedSort === 1) {
+        // 좋아요 순 정렬 시 7일 이내만
+        whereConditions.push(`P.created_at >= NOW() - INTERVAL '7 days'`);
+        orderBy = `"likesCount" DESC`;
+    }
+
+    values.push(offset); // 마지막 값은 offset
+    const offsetParam = `$${valueIndex}`;
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : '';
+
+    const postList = (await psql.query(`
+        SELECT 
+            P.idx,
+            P.title,
+            P.created_at AS "createdAt",
+            (
+                SELECT COUNT(*) FROM post_likes PL
+                WHERE PL.post_idx = P.idx
+            ) AS "likesCount",
+            (
+                SELECT COUNT(*) FROM comment C
+                WHERE C.post_idx = P.idx
+            ) AS "commentsCount"
+        FROM post P
+        ${whereClause}
         ORDER BY ${orderBy}
-        LIMIT 10 OFFSET $2;
-        `, values
-    ).rows;
+        LIMIT 10 OFFSET ${offsetParam};
+    `, values)).rows;
 
-    if(postList.length === 0) return res.sendStatus(204);
+    if (!postList || postList.length === 0) return res.sendStatus(204);
 
+    return res.status(200).send({ list: postList });
+}));
+
+//게시물 미리보기
+router.get("/preview", endRequestHandler(async (req, res, next) => {
+
+    const postTitleList = (await psql.query(`SELECT P.idx, P.title, E.name 
+        FROM post P, emotion E WHERE P.emotion_idx = E.idx
+        ORDER BY p.created_at DESC
+        LIMIT 5;
+        `)).rows;
+
+    if(postTitleList === undefined || postTitleList === null || postTitleList.length === 0) return res.sendStatus(204); 
+    
     return res.status(200).send({
-        list: postList
+        list: postTitleList
     });
 }));
 
@@ -55,43 +112,27 @@ router.get("/:idx", checkAuth({required: false}), checkValidity({[PARAM_REGEX]: 
     const loginUser = req.decoded;
     const userIdx = loginUser?.idx ?? -1;
 
-    const post = await psql.query(`SELECT P.title, P.content,
+    const post = (await psql.query(`SELECT P.title, P.content,
             (P.user_idx = $1) AS "isMine",
             P.created_at AS "date",
             (
                 SELECT COUNT(*)
                 FROM Post_Likes Pl
-                WHERE Pl.post_idx = P.post_idx
+                WHERE Pl.post_idx = P.idx
             ) AS "likesCount",
             EXISTS (
                 SELECT 1
                 FROM Post_Likes Pl
-                WHERE Pl.post_idx = P.post_idx AND Pl.user_idx = $1
+                WHERE Pl.post_idx = P.idx AND Pl.user_idx = $1
             ) AS "likedByMe"
         FROM Post P
-        WHERE P.post_idx = $2;
-    `, [userIdx, postIdx]).row[0];
+        WHERE P.idx = $2;
+    `, [userIdx, postIdx])).rows[0];
     
 
-    if(post.length === 0) return next(NotFoundException());
+    if(post === undefined || post === null || post.length === 0) return next(new NotFoundException());
     
     return res.status(200).send(post);
-}));
-
-//게시물 미리보기
-router.get("/preview", endRequestHandler(async (req, res, next) => {
-
-    const postTitleList = await psql.query(`SELECT P.idx, P.title, E.name 
-        FROM post P, emotion E WHERE P.emotion_idx = E.idx
-        ORDER BY p.created_at DESC
-        LIMIT 5;
-        `).rows;
-
-    if(postTitleList.length === 0) return res.sendStatus(204); 
-    
-    return res.status(200).send({
-        list: postTitleList
-    });
 }));
 
 //게시물 생성
@@ -100,7 +141,7 @@ router.post("/", checkAuth(), checkValidity({[TITLE_REGEX]: ["title"], [PARAM_RE
     const { title, content, emotionIdx } = req.body;
 
     await psql.query(`INSERT INTO post (title, content, emotion_idx, user_idx)
-        VALUES ($1, $2, $3)
+        VALUES ($1, $2, $3, $4)
         `, [title, content, emotionIdx, loginUser.idx]
     );
 
@@ -146,15 +187,12 @@ router.post("/:idx/likes", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}),
         `, [postIdx, loginUser.idx]
     );
 
-    const likesCount = await psql.query(`SELECT COUNT(*) FROM post_likes
-        WHERE post_idx = $1
+    const likesCount = (await psql.query(`SELECT COUNT(*) AS "likesCount" FROM post_likes
+        WHERE post_idx = $1;
         `, [postIdx]
-    ).row[0];
+    )).rows[0];
 
-    return res.status(200).send({
-        likesCount: likesCount,
-        likedByMe: true
-    });
+    return res.status(200).send(likesCount);
 }));
 
 //게시물 좋아요 삭제
@@ -167,15 +205,12 @@ router.delete("/:idx/likes", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}
         `, [postIdx, loginUser.idx]
     );
 
-    const likesCount = await psql.query(`SELECT COUNT(*) FROM post_likes
+    const likesCount = (await psql.query(`SELECT COUNT(*) FROM post_likes
         WHERE post_idx = $1
         `, [postIdx]
-    ).row[0];
+    )).rows[0];
 
-    return res.status(200).send({
-        likesCount: likesCount,
-        likedByMe: false
-    });
+    return res.status(200).send(likesCount);
 }));
 
 //댓글 목록 불러오기
