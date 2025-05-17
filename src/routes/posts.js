@@ -221,18 +221,18 @@ router.get("/:idx/comments", checkAuth({required: false}), checkValidity({[PARAM
     const loginUser = req.decoded;
     const userIdx = loginUser?.idx ?? -1;
 
-    const commentsCount = await psql.query(`SELECT COUNT(*) FROM comment
+    const commentsCount = (await psql.query(`SELECT COUNT(*) FROM comment
         WHERE post_idx = $1
-        `, [postIdx]).row[0];
-    const commentsList = await psql.query(`SELECT idx, content, created_at AS "createdAt", 
+        `, [postIdx])).rows[0].count;
+    const commentsList = (await psql.query(`SELECT idx, content, created_at AS "createdAt", 
             (user_idx = $1) AS "isAuthor" FROM comment 
             WHERE post_idx = $2
             ORDER BY created_at DESC
             LIMIT 10 OFFSET $3
         `, [userIdx, postIdx, offset]
-    ).rows;
+    )).rows;
 
-    if(commentsList.length === 0) return res.sendStatus(204); 
+    if(commentsList === undefined || commentsList === null || commentsList.length === 0) return res.sendStatus(204); 
 
     return res.status(200).send({
         commentsCount: commentsCount,
