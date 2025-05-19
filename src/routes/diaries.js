@@ -8,11 +8,12 @@ const {
   TITLE_REGEX, COMMENT_CONTENT_REGEX, PARAM_REGEX, DATE_REGEX, TAG_REGEX
 } = require("../constants");
 const {
-  BadRequestException, NotFoundException
+  BadRequestException, NotFoundException,ForbiddenException
 } = require("../model/customException");
 
 // GET /diaries (검색 + 정렬)
 router.get("/", checkAuth(), checkValidity({
+  optional: true,
   [DATE_REGEX]: ["date", "start", "end"],
   [PARAM_REGEX]: ["emotion_idx", "sort"],
   [TAG_REGEX]:["tag"]
@@ -40,18 +41,25 @@ router.get("/", checkAuth(), checkValidity({
     values.push(emotion_idx);
   }
 
-  let tagNames = Array.isArray(tag) ? tag : tag ? [tag] : [];
-  tagNames = tagNames.map(name => name.trim().replace(/^#/, ""))
-                     .filter(name => TAG_REGEX.test(name));
+  let tagInput = Array.isArray(tag) ? tag : tag ? [tag] : [];
+
+  const invalidTags = tagInput.filter(name => !TAG_REGEX.test(name.trim()));
+
+if (tagInput.length > 0 && invalidTags.length > 0) {
+  return next(new BadRequestException(`유효하지 않은 태그가 포함되어 있습니다: ${invalidTags.join(", ")}`));
+}
+
+  let tagNames = tagInput
+    .map(name => name.trim().replace(/^#/, ""))
+    .filter(name => TAG_REGEX.test(name));
 
   if (tagNames.length > 0) {
     joinClauses.push(`
       JOIN (
-        SELECT DT.diary_idx
-        FROM diary_tag DT
-        JOIN tag T ON T.idx = DT.tag_idx
-        WHERE T.name = ANY($${paramIdx++})
-        GROUP BY DT.diary_idx
+        SELECT diary_idx
+        FROM diary_tag
+        WHERE name = ANY($${paramIdx++})
+        GROUP BY diary_idx
         HAVING COUNT(*) = $${paramIdx++}
       ) TagFilter ON TagFilter.diary_idx = D.idx
     `);
@@ -62,10 +70,9 @@ router.get("/", checkAuth(), checkValidity({
     SELECT D.idx, D.title, D.content, D.emotion_idx, TO_CHAR(D.date, 'YYYY-MM-DD') AS date,
       COALESCE(
         ARRAY(
-          SELECT T.name
-          FROM diary_tag DT
-          JOIN tag T ON DT.tag_idx = T.idx
-          WHERE DT.diary_idx = D.idx
+          SELECT name
+          FROM diary_tag
+          WHERE diary_idx = D.idx
         ), NULL
       ) AS tag
     FROM diary D
@@ -104,20 +111,11 @@ router.post("/", checkAuth(), checkValidity({
       name = name.trim().replace(/^#/, "");
       if (!TAG_REGEX.test(name)) continue;
 
-      const tagResult = await psql.query(`
-        INSERT INTO tag (name)
-        VALUES ($1)
-        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-        RETURNING idx;
-      `, [name]);
-
-      const tagIdx = tagResult.rows[0].idx;
-
-      await psql.query(`
-        INSERT INTO diary_tag (diary_idx, tag_idx)
-        VALUES ($1, $2)
-        ON CONFLICT DO NOTHING;
-      `, [diaryIdx, tagIdx]);
+    await psql.query(`
+      INSERT INTO diary_tag (name, diary_idx)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING;
+    `, [name, diaryIdx]);
     }
   }
 
@@ -140,10 +138,9 @@ router.get("/:idx", checkAuth(), checkValidity({
   if (!diary) return next(new NotFoundException());
 
   const tagList = (await psql.query(`
-    SELECT T.name
-    FROM diary_tag DT
-    JOIN tag T ON DT.tag_idx = T.idx
-    WHERE DT.diary_idx = $1;
+    SELECT name
+    FROM diary_tag
+    WHERE diary_idx = $1;
   `, [diaryIdx])).rows.map(r => r.name);
 
   diary.tag = tagList.length > 0 ? tagList : null;
@@ -170,14 +167,24 @@ router.put("/:idx", checkAuth(), checkValidity({
   const diaryIdx = req.params.idx;
   const userIdx = req.decoded.idx;
 
+  const targetDiary = await psql.query(`
+    SELECT user_idx FROM diary WHERE idx = $1
+  `, [diaryIdx]);
+
+  if (targetDiary.rowCount === 0) {
+    return next(new NotFoundException());
+  }
+
+  if (targetDiary.rows[0].user_idx !== userIdx) {
+    return next(new ForbiddenException("작성자만 수정할 수 있습니다."));
+  }
+
   const result = await psql.query(`
     UPDATE diary
     SET title = $1, content = $2, emotion_idx = $3, date = $4
-    WHERE idx = $5 AND user_idx = $6
+    WHERE idx = $5
     RETURNING idx;
-  `, [title, content, emotion_idx, date, diaryIdx, userIdx]);
-
-  if (result.rowCount === 0) return next(new NotFoundException());
+  `, [title, content, emotion_idx, date, diaryIdx]);
 
   await psql.query(`DELETE FROM diary_tag WHERE diary_idx = $1`, [diaryIdx]);
 
@@ -187,20 +194,11 @@ router.put("/:idx", checkAuth(), checkValidity({
       name = name.trim().replace(/^#/, "");
       if (!TAG_REGEX.test(name)) continue;
 
-      const tagResult = await psql.query(`
-        INSERT INTO tag (name)
-        VALUES ($1)
-        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-        RETURNING idx;
-      `, [name]);
-
-      const tagIdx = tagResult.rows[0].idx;
-
       await psql.query(`
-        INSERT INTO diary_tag (diary_idx, tag_idx)
+        INSERT INTO diary_tag (name, diary_idx)
         VALUES ($1, $2)
         ON CONFLICT DO NOTHING;
-      `, [diaryIdx, tagIdx]);
+      `, [name, diaryIdx]);
     }
   }
 
@@ -214,11 +212,23 @@ router.delete("/:idx", checkAuth(), checkValidity({
   const userIdx = req.decoded.idx;
   const diaryIdx = req.params.idx;
 
-  await psql.query(`DELETE FROM diary_tag WHERE diary_idx = $1`, [diaryIdx]);
-  const result = await psql.query(`DELETE FROM diary WHERE idx = $1 AND user_idx = $2`, [diaryIdx, userIdx]);
+  const targetDiary = await psql.query(`
+    SELECT user_idx FROM diary WHERE idx = $1
+  `, [diaryIdx]);
 
-  if (result.rowCount === 0) return next(new NotFoundException());
-  return res.sendStatus(200);
+  if (targetDiary.rowCount === 0) {
+    return next(new NotFoundException());
+  }
+
+  if (targetDiary.rows[0].user_idx !== userIdx) {
+    return next(new ForbiddenException("작성자만 삭제할 수 있습니다."));
+  }
+
+  await psql.query(`DELETE FROM diary_tag WHERE diary_idx = $1`, [diaryIdx]);
+  
+  await psql.query(`DELETE FROM diary WHERE idx = $1`, [diaryIdx]);
+
+  return res.sendStatus(204);
 }));
 
 module.exports = router;
