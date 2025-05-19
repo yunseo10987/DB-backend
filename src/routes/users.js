@@ -49,7 +49,7 @@ router.post("/login", checkValidity({
     SELECT idx, role FROM "user" WHERE email = $1 AND password = $2
   `, [email, password])).rows[0];
 
-  if (!user) return next(new UnauthorizedException());
+  if (!user) return next(new UnauthorizedException("이메일/비밀번호가 틀렸습니다."));
 
   const token = makeToken({ idx: user.idx, rank: user.role });
 
@@ -63,7 +63,7 @@ router.get("/me", checkAuth(), endRequestHandler(async (req, res, next) => {
   const user = (await psql.query(`
     SELECT nickname, password, email, role
     FROM "user"
-    WHERE user_idx = $1 AND role = 0
+    WHERE idx = $1 AND role = 0
   `, [userIdx])).rows[0];
 
   if (!user) return next(new NotFoundException());
@@ -71,7 +71,7 @@ router.get("/me", checkAuth(), endRequestHandler(async (req, res, next) => {
   const emotionResult = (await psql.query(`
     SELECT emotion_idx
     FROM diary
-    WHERE user_idx = $1
+    WHERE idx = $1
     GROUP BY emotion_idx
     ORDER BY COUNT(*) DESC
     LIMIT 1;
@@ -80,7 +80,7 @@ router.get("/me", checkAuth(), endRequestHandler(async (req, res, next) => {
   const emotionList = (await psql.query(`
     SELECT emotion_idx, COUNT(*) AS count
     FROM diary
-    WHERE user_idx = $1 AND DATE_PART('month', date) = DATE_PART('month', CURRENT_DATE)
+    WHERE idx = $1 AND DATE_PART('month', date) = DATE_PART('month', CURRENT_DATE)
       AND DATE_PART('year', date) = DATE_PART('year', CURRENT_DATE)
     GROUP BY emotion_idx
     ORDER BY count DESC;
@@ -104,7 +104,7 @@ router.get("/:idx", checkAuth(), checkValidity({
   const user = (await psql.query(`
     SELECT nickname, email, role
     FROM "user"
-    WHERE user_idx = $1
+    WHERE idx = $1
   `, [targetIdx])).rows[0];
 
   if (!user) return next(new NotFoundException());
@@ -112,7 +112,7 @@ router.get("/:idx", checkAuth(), checkValidity({
   const emotionResult = (await psql.query(`
     SELECT emotion_idx
     FROM diary
-    WHERE user_idx = $1
+    WHERE idx = $1
     GROUP BY emotion_idx
     ORDER BY COUNT(*) DESC
     LIMIT 1;
@@ -130,7 +130,7 @@ router.put("/", checkAuth(), checkValidity({
   const userIdx = req.decoded.idx;
   const { nickname } = req.body;
 
-  await psql.query(`UPDATE "user" SET nickname = $1 WHERE user_idx = $2`, [nickname, userIdx]);
+  await psql.query(`UPDATE "user" SET nickname = $1 WHERE idx = $2`, [nickname, userIdx]);
 
   return res.sendStatus(200);
 }));
@@ -139,7 +139,7 @@ router.put("/", checkAuth(), checkValidity({
 router.delete("/", checkAuth(), endRequestHandler(async (req, res, next) => {
   const userIdx = req.decoded.idx;
 
-  await psql.query(`DELETE FROM "user" WHERE user_idx = $1`, [userIdx]);
+  await psql.query(`DELETE FROM "user" WHERE idx = $1`, [userIdx]);
 
   return res.sendStatus(200);
 }));
