@@ -31,8 +31,8 @@ router.post("/", checkValidity({
   if (exists) return next(new ConflictException("이미 존재하는 이메일입니다."));
 //기본 role을 0(general)로 설정
   await psql.query(`
-    INSERT INTO "user" (email, password, nickname, role)
-    VALUES ($1, $2, $3, 0)
+    INSERT INTO "user" (email, password, nickname)
+    VALUES ($1, $2, $3)
   `, [email, password, nickname]);
 
   return res.sendStatus(201);
