@@ -9,8 +9,6 @@ const {
 } = require("../constants");
 
 const checkValidity = (data) => {
-    const isOptional = data.optional === true;// 옵셔널 한건 따로 처리리
-    if (isOptional) delete data.optional;
     return (req, res, next) => {
         for (typeKey in data) {
             for (const item of data[typeKey]) {
@@ -20,16 +18,14 @@ const checkValidity = (data) => {
                         req.query[item] ? (source = "query", req.query[item]) :
                             null;
 
-                if (value === null || value === undefined) {
-                    if (isOptional) continue;
-                    return next(new BadRequestException(`'${item}' 항목이 누락되었습니다.`));
-                }
-
-
                 const stringFieldArray = [TITLE_REGEX.source, COMMENT_CONTENT_REGEX.source];
 
                 const regexParts = typeKey.match(/\/(.*?)\/([gimy]*)$/);
                 const regex = new RegExp(regexParts[1], regexParts[2]);
+
+                if (!value) {
+                    return next(new BadRequestException());
+                }
 
                 if (!regex.test(value)) {
                     return next(new BadRequestException());
