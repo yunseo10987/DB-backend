@@ -14,24 +14,6 @@ const {
     QUERY_REGEX} = require("../constants");
 const { NotFoundException, BadRequestException, UnauthorizedException } = require("../model/customException");
 
-router.post("/login", checkValidity({[EMAIL_REGEX]: ["id"], [PASSWORD_REGEX]: ["pw"]}), endRequestHandler(async (req, res, next) => {
-  const { id, pw } = req.body;
-
-  const loginUser = (await psql.query(`SELECT idx, role FROM "user" WHERE email=$1 AND password=$2;`, [id, pw])).rows[0];
-
-  if (!loginUser) return next(new UnauthorizedException());
-
-  const accessToken = makeToken({
-    idx: loginUser.idx,
-    rank: loginUser.role,
-  });
-
-  return res.status(200).send({
-    token: accessToken
-  })
-})
-);
-
 //게시물 전체 보기
 router.get("/", checkValidity({ [PARAM_REGEX]: ["page"], [QUERY_REGEX]: ["emotionIdx", "sort"] }), endRequestHandler(async (req, res, next) => {
     const { page, emotionIdx, sort } = req.query;
