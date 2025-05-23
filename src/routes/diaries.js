@@ -13,66 +13,56 @@ const {
 
 // GET /diaries (검색 + 정렬)
 router.get("/", checkAuth(), checkValidity({
-  optional: true,
+  [PARAM_REGEX]: ["sort"],
+  [QUERY_REGEX]: ["emotion_idx"],
   [DATE_REGEX]: ["date", "start", "end"],
-  [PARAM_REGEX]: ["emotion_idx", "sort"],
-  [TAG_REGEX]:["tag"]
+  [TAG_REGEX]: ["tag"]
 }), endRequestHandler(async (req, res, next) => {
   const userIdx = req.decoded.idx;
-  const { date, start, end, emotion_idx, tag, sort } = req.query;
+  const { date, start, end, sort, emotion_idx, tag } = req.query;
 
   const values = [userIdx];
   let whereClauses = [`D.user_idx = $1`];
   let joinClauses = [];
-  let orderBy = sort == 1 ? `D.date ASC` : `D.date DESC`;
   let paramIdx = values.length + 1;
+  const orderBy = sort === 1 ? "D.date ASC" : "D.date DESC";
 
-  if (date) {
+  // 날짜 처리
+  if (date !== "-1") {
     whereClauses.push(`D.date = $${paramIdx++}`);
     values.push(date);
-  } else if (start && end) {
+  } else if (start !== "-1" && end !== "-1") {
     whereClauses.push(`D.date BETWEEN $${paramIdx++} AND $${paramIdx}`);
     values.push(start, end);
     paramIdx++;
   }
 
-  if (emotion_idx !== undefined) {
+  // 감정 필터
+  if (emotion_idx !== -1) {
     whereClauses.push(`D.emotion_idx = $${paramIdx++}`);
     values.push(emotion_idx);
   }
 
-  let tagInput = Array.isArray(tag) ? tag : tag ? [tag] : [];
-
-  const invalidTags = tagInput.filter(name => !TAG_REGEX.test(name.trim()));
-
-if (tagInput.length > 0 && invalidTags.length > 0) {
-  return next(new BadRequestException(`유효하지 않은 태그가 포함되어 있습니다: ${invalidTags.join(", ")}`));
-}
-
-  let tagNames = tagInput
-    .map(name => name.trim().replace(/^#/, ""))
-    .filter(name => TAG_REGEX.test(name));
-
-  if (tagNames.length > 0) {
+  // 태그 필터
+  if (tag !== "-1") {
+    const cleanedTag = tag.trim().replace(/^#/, "");
     joinClauses.push(`
       JOIN (
         SELECT diary_idx
         FROM diary_tag
-        WHERE name = ANY($${paramIdx++})
+        WHERE name = $${paramIdx++}
         GROUP BY diary_idx
-        HAVING COUNT(*) = $${paramIdx++}
+        HAVING COUNT(*) = 1
       ) TagFilter ON TagFilter.diary_idx = D.idx
     `);
-    values.push(tagNames, tagNames.length);
+    values.push(cleanedTag);
   }
 
   const result = await psql.query(`
     SELECT D.idx, D.title, D.content, D.emotion_idx, TO_CHAR(D.date, 'YYYY-MM-DD') AS date,
       COALESCE(
         ARRAY(
-          SELECT name
-          FROM diary_tag
-          WHERE diary_idx = D.idx
+          SELECT name FROM diary_tag WHERE diary_idx = D.idx
         ), NULL
       ) AS tag
     FROM diary D
@@ -85,6 +75,7 @@ if (tagInput.length > 0 && invalidTags.length > 0) {
   if (!list || list.length === 0) return res.sendStatus(204);
   return res.status(200).send({ list });
 }));
+
 
 // POST /diaries
 router.post("/", checkAuth(), checkValidity({

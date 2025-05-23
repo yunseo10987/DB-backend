@@ -73,7 +73,7 @@ router.get("/me", checkAuth(), endRequestHandler(async (req, res, next) => {
     FROM diary
     WHERE idx = $1
     GROUP BY emotion_idx
-    ORDER BY COUNT(*) DESC
+    ORDER BY COUNT(*) DESC, MAX(date) DESC
     LIMIT 1;
   `, [userIdx])).rows[0];
 //감정 통계계
