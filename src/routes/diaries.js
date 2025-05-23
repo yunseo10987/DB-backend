@@ -4,30 +4,34 @@ const psql = require("../../database/postgre");
 const checkAuth = require("../midlewares/checkAuth");
 const checkValidity = require("../midlewares/checkValidity");
 const endRequestHandler = require("../modules/endRequestHandler");
+
 const {
-  TITLE_REGEX, COMMENT_CONTENT_REGEX, PARAM_REGEX, DATE_REGEX, TAG_REGEX
+  TITLE_REGEX, COMMENT_CONTENT_REGEX, PARAM_REGEX, DATE_REGEX, TAG_REGEX, QUERY_REGEX
 } = require("../constants");
+
 const {
-  BadRequestException, NotFoundException,ForbiddenException
+  BadRequestException, NotFoundException, ForbiddenException
 } = require("../model/customException");
 
 // GET /diaries (검색 + 정렬)
+// GET /diaries
 router.get("/", checkAuth(), checkValidity({
   [PARAM_REGEX]: ["sort"],
   [QUERY_REGEX]: ["emotion_idx"],
-  [DATE_REGEX]: ["date", "start", "end"],
-  [TAG_REGEX]: ["tag"]
+  [DATE_REGEX] : ["date", "start", "end"]
 }), endRequestHandler(async (req, res, next) => {
-  const userIdx = req.decoded.idx;
-  const { date, start, end, sort, emotion_idx, tag } = req.query;
+
+  const userIdx     = req.decoded.idx;
+  const sort        = Number(req.query.sort);
+  const emotion_idx = Number(req.query.emotion_idx);
+  const { date, start, end, tag } = req.query;
 
   const values = [userIdx];
-  let whereClauses = [`D.user_idx = $1`];
-  let joinClauses = [];
-  let paramIdx = values.length + 1;
-  const orderBy = sort === 1 ? "D.date ASC" : "D.date DESC";
-
-  // 날짜 처리
+  let whereClauses = ["D.user_idx = $1"];
+  let joinClauses  = [];
+  let paramIdx     = values.length + 1;
+  const orderBy    = sort === 2 ? "D.date ASC" : "D.date DESC";
+  
   if (date !== "-1") {
     whereClauses.push(`D.date = $${paramIdx++}`);
     values.push(date);
@@ -37,14 +41,12 @@ router.get("/", checkAuth(), checkValidity({
     paramIdx++;
   }
 
-  // 감정 필터
   if (emotion_idx !== -1) {
     whereClauses.push(`D.emotion_idx = $${paramIdx++}`);
     values.push(emotion_idx);
   }
 
-  // 태그 필터
-  if (tag !== "-1") {
+  if (typeof tag === "string" && tag !== "-1") {
     const cleanedTag = tag.trim().replace(/^#/, "");
     joinClauses.push(`
       JOIN (
@@ -57,7 +59,7 @@ router.get("/", checkAuth(), checkValidity({
     `);
     values.push(cleanedTag);
   }
-
+console.log({ values, whereClauses, joinClauses });
   const result = await psql.query(`
     SELECT D.idx, D.title, D.content, D.emotion_idx, TO_CHAR(D.date, 'YYYY-MM-DD') AS date,
       COALESCE(
@@ -76,14 +78,12 @@ router.get("/", checkAuth(), checkValidity({
   return res.status(200).send({ list });
 }));
 
-
 // POST /diaries
 router.post("/", checkAuth(), checkValidity({
   [TITLE_REGEX]: ["title"],
   [COMMENT_CONTENT_REGEX]: ["content"],
   [PARAM_REGEX]: ["emotion_idx"],
-  [DATE_REGEX]: ["date"],
-  [TAG_REGEX]: ["tag"]
+  [DATE_REGEX]: ["date"]
 }), endRequestHandler(async (req, res, next) => {
   const { title, content, emotion_idx, date, tag } = req.body;
   const userIdx = req.decoded.idx;
@@ -102,11 +102,11 @@ router.post("/", checkAuth(), checkValidity({
       name = name.trim().replace(/^#/, "");
       if (!TAG_REGEX.test(name)) continue;
 
-    await psql.query(`
-      INSERT INTO diary_tag (name, diary_idx)
-      VALUES ($1, $2)
-      ON CONFLICT DO NOTHING;
-    `, [name, diaryIdx]);
+      await psql.query(`
+        INSERT INTO diary_tag (name, diary_idx)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING;
+      `, [name, diaryIdx]);
     }
   }
 
@@ -129,21 +129,12 @@ router.get("/:idx", checkAuth(), checkValidity({
   if (!diary) return next(new NotFoundException());
 
   const tagList = (await psql.query(`
-    SELECT name
-    FROM diary_tag
-    WHERE diary_idx = $1;
+    SELECT name FROM diary_tag WHERE diary_idx = $1;
   `, [diaryIdx])).rows.map(r => r.name);
 
   diary.tag = tagList.length > 0 ? tagList : null;
 
-  return res.status(200).send({
-    idx: diary.idx,
-    date: diary.date,
-    title: diary.title,
-    content: diary.content,
-    emotion_idx: diary.emotion_idx,
-    tag: diary.tag
-  });
+  return res.status(200).send(diary);
 }));
 
 // PUT /diaries/:idx
@@ -170,11 +161,10 @@ router.put("/:idx", checkAuth(), checkValidity({
     return next(new ForbiddenException("작성자만 수정할 수 있습니다."));
   }
 
-  const result = await psql.query(`
+  await psql.query(`
     UPDATE diary
     SET title = $1, content = $2, emotion_idx = $3, date = $4
-    WHERE idx = $5
-    RETURNING idx;
+    WHERE idx = $5;
   `, [title, content, emotion_idx, date, diaryIdx]);
 
   await psql.query(`DELETE FROM diary_tag WHERE diary_idx = $1`, [diaryIdx]);
@@ -216,7 +206,6 @@ router.delete("/:idx", checkAuth(), checkValidity({
   }
 
   await psql.query(`DELETE FROM diary_tag WHERE diary_idx = $1`, [diaryIdx]);
-  
   await psql.query(`DELETE FROM diary WHERE idx = $1`, [diaryIdx]);
 
   return res.sendStatus(204);
