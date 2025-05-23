@@ -12,12 +12,7 @@ const {
 } = require("../model/customException");
 
 // GET /diaries (검색 + 정렬)
-router.get("/", checkAuth(), checkValidity({
-  optional: true,
-  [DATE_REGEX]: ["date", "start", "end"],
-  [PARAM_REGEX]: ["emotion_idx", "sort"],
-  [TAG_REGEX]:["tag"]
-}), endRequestHandler(async (req, res, next) => {
+router.get("/", checkAuth(), endRequestHandler(async (req, res, next) => {
   const userIdx = req.decoded.idx;
   const { date, start, end, emotion_idx, tag, sort } = req.query;
 
@@ -27,31 +22,43 @@ router.get("/", checkAuth(), checkValidity({
   let orderBy = sort == 1 ? `D.date ASC` : `D.date DESC`;
   let paramIdx = values.length + 1;
 
+  // 날짜 단일 또는 범위 처리
   if (date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return next(new BadRequestException("날짜 형식이 올바르지 않습니다."));
+    }
     whereClauses.push(`D.date = $${paramIdx++}`);
     values.push(date);
   } else if (start && end) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      return next(new BadRequestException("시작일 또는 종료일의 형식이 올바르지 않습니다."));
+    }
     whereClauses.push(`D.date BETWEEN $${paramIdx++} AND $${paramIdx}`);
     values.push(start, end);
     paramIdx++;
   }
 
+  // 감정 필터
   if (emotion_idx !== undefined) {
+    const parsedEmotion = parseInt(emotion_idx);
+    if (isNaN(parsedEmotion)) {
+      return next(new BadRequestException("emotion_idx는 숫자여야 합니다."));
+    }
     whereClauses.push(`D.emotion_idx = $${paramIdx++}`);
-    values.push(emotion_idx);
+    values.push(parsedEmotion);
   }
 
-  let tagInput = Array.isArray(tag) ? tag : tag ? [tag] : [];
+  // 태그 필터
+  const tagInput = Array.isArray(tag) ? tag : tag ? [tag] : [];
+  const invalidTags = tagInput.filter(name => !/^[^#\s]{2,20}$/.test(name.trim()));
 
-  const invalidTags = tagInput.filter(name => !TAG_REGEX.test(name.trim()));
+  if (tagInput.length > 0 && invalidTags.length > 0) {
+    return next(new BadRequestException(`유효하지 않은 태그가 포함되어 있습니다: ${invalidTags.join(", ")}`));
+  }
 
-if (tagInput.length > 0 && invalidTags.length > 0) {
-  return next(new BadRequestException(`유효하지 않은 태그가 포함되어 있습니다: ${invalidTags.join(", ")}`));
-}
-
-  let tagNames = tagInput
+  const tagNames = tagInput
     .map(name => name.trim().replace(/^#/, ""))
-    .filter(name => TAG_REGEX.test(name));
+    .filter(name => /^[^#\s]{2,20}$/.test(name));
 
   if (tagNames.length > 0) {
     joinClauses.push(`
