@@ -8,10 +8,10 @@ const endRequestHandler = require("../modules/endRequestHandler");
 const makeToken = require("../modules/makeToken");
 
 const {
-    EMAIL_REGEX,PASSWORD_REGEX,
+    EMAIL_REGEX, PASSWORD_REGEX,
     PARAM_REGEX, TITLE_REGEX,
     COMMENT_CONTENT_REGEX,
-    QUERY_REGEX} = require("../constants");
+    QUERY_REGEX } = require("../constants");
 const { NotFoundException, BadRequestException, UnauthorizedException } = require("../model/customException");
 
 //게시물 전체 보기
@@ -81,15 +81,15 @@ router.get("/preview", endRequestHandler(async (req, res, next) => {
         LIMIT 5;
         `)).rows;
 
-    if(postTitleList === undefined || postTitleList === null || postTitleList.length === 0) return res.sendStatus(204); 
-    
+    if (postTitleList === undefined || postTitleList === null || postTitleList.length === 0) return res.sendStatus(204);
+
     return res.status(200).send({
         list: postTitleList
     });
 }));
 
 //게시물 상세보기
-router.get("/:idx", checkAuth({required: false}), checkValidity({[PARAM_REGEX]: ["idx"]}), endRequestHandler(async (req, res, next) => {
+router.get("/:idx", checkAuth({ required: false }), checkValidity({ [PARAM_REGEX]: ["idx"] }), endRequestHandler(async (req, res, next) => {
     const postIdx = req.params.idx;
     const loginUser = req.decoded;
     const userIdx = loginUser?.idx ?? -1;
@@ -110,15 +110,15 @@ router.get("/:idx", checkAuth({required: false}), checkValidity({[PARAM_REGEX]: 
         FROM Post P
         WHERE P.idx = $2;
     `, [userIdx, postIdx])).rows[0];
-    
 
-    if(post === undefined || post === null || post.length === 0) return next(new NotFoundException());
-    
+
+    if (post === undefined || post === null || post.length === 0) return next(new NotFoundException());
+
     return res.status(200).send(post);
 }));
 
 //게시물 생성
-router.post("/", checkAuth(), checkValidity({[TITLE_REGEX]: ["title"], [PARAM_REGEX]: ["emotionIdx"]}), endRequestHandler(async (req, res, next) => {
+router.post("/", checkAuth(), checkValidity({ [TITLE_REGEX]: ["title"], [PARAM_REGEX]: ["emotionIdx"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const { title, content, emotionIdx } = req.body;
 
@@ -132,34 +132,61 @@ router.post("/", checkAuth(), checkValidity({[TITLE_REGEX]: ["title"], [PARAM_RE
 }));
 
 //게시물 수정
-router.put("/:idx", checkAuth(), checkValidity({[TITLE_REGEX]: ["title"], [PARAM_REGEX]: ["emotionIdx"], [PARAM_REGEX]: ["idx"]}), endRequestHandler(async (req, res, next) => {
+router.put("/:idx", checkAuth(), checkValidity({ [TITLE_REGEX]: ["title"], [PARAM_REGEX]: ["emotionIdx"], [PARAM_REGEX]: ["idx"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const postIdx = req.params.idx;
     const { title, content, emotionIdx } = req.body;
 
-    await psql.query(`UPDATE post SET title = $1, content = $2, emotion_idx = $3
-        WHERE idx = $4 AND user_idx = $5;
-        `, [title, content, emotionIdx, postIdx, loginUser.idx]
-    );
+    // 기존: 본인 글만 수정 가능
+    // await psql.query(`UPDATE post SET title = $1, content = $2, emotion_idx = $3
+    //     WHERE idx = $4 AND user_idx = $5;
+    //     `, [title, content, emotionIdx, postIdx, loginUser.idx]
+    // );
+
+    // ✅ 변경: 관리자도 수정 가능
+    const target = await psql.query(`SELECT user_idx FROM post WHERE idx = $1`, [postIdx]);
+    if (target.rowCount === 0) return next(new NotFoundException());
+
+    const postOwner = target.rows[0].user_idx;
+    if (postOwner !== loginUser.idx && loginUser.rank !== 'manager') {
+        return next(new ForbiddenException("작성자만 수정할 수 있습니다."));
+    }
+
+    await psql.query(`
+    UPDATE post SET title = $1, content = $2, emotion_idx = $3
+    WHERE idx = $4;
+  `, [title, content, emotionIdx, postIdx]);
 
     return res.sendStatus(201);
 }));
 
 //게시물 삭제
-router.delete("/:idx", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}), endRequestHandler(async(req, res, next) => {
+router.delete("/:idx", checkAuth(), checkValidity({ [PARAM_REGEX]: ["idx"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const postIdx = req.params.idx;
 
-    await psql.query(`DELETE FROM post 
-        WHERE idx = $1 AND user_idx = $2;
-        `, [postIdx, loginUser.idx]
-    );
+    // 기존: 본인 글만 삭제 가능
+    // await psql.query(`DELETE FROM post 
+    //     WHERE idx = $1 AND user_idx = $2;
+    //     `, [postIdx, loginUser.idx]
+    // );
+
+    // ✅ 변경: 관리자도 삭제 가능
+    const target = await psql.query(`SELECT user_idx FROM post WHERE idx = $1`, [postIdx]);
+    if (target.rowCount === 0) return next(new NotFoundException());
+
+    const postOwner = target.rows[0].user_idx;
+    if (postOwner !== loginUser.idx && loginUser.rank !== 'manager') {
+        return next(new ForbiddenException("작성자만 삭제할 수 있습니다."));
+    }
+
+    await psql.query(`DELETE FROM post WHERE idx = $1`, [postIdx]);
 
     return res.sendStatus(201);
 }));
 
 //게시물 좋아요 생성
-router.post("/:idx/likes", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}), endRequestHandler(async(req, res, next) => {
+router.post("/:idx/likes", checkAuth(), checkValidity({ [PARAM_REGEX]: ["idx"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const postIdx = req.params.idx;
 
@@ -178,7 +205,7 @@ router.post("/:idx/likes", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}),
 }));
 
 //게시물 좋아요 삭제
-router.delete("/:idx/likes", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}), endRequestHandler(async(req, res, next) => {
+router.delete("/:idx/likes", checkAuth(), checkValidity({ [PARAM_REGEX]: ["idx"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const postIdx = req.params.idx;
 
@@ -196,7 +223,7 @@ router.delete("/:idx/likes", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}
 }));
 
 //댓글 목록 불러오기
-router.get("/:idx/comments", checkAuth({required: false}), checkValidity({[PARAM_REGEX]: ["idx", "page"]}), endRequestHandler(async(req, res, next) => {
+router.get("/:idx/comments", checkAuth({ required: false }), checkValidity({ [PARAM_REGEX]: ["idx", "page"] }), endRequestHandler(async (req, res, next) => {
     const postIdx = req.params.idx;
     const page = req.query.page;
     const offset = (page - 1) * 10;
@@ -214,7 +241,7 @@ router.get("/:idx/comments", checkAuth({required: false}), checkValidity({[PARAM
         `, [userIdx, postIdx, offset]
     )).rows;
 
-    if(commentsList === undefined || commentsList === null || commentsList.length === 0) return res.sendStatus(204); 
+    if (commentsList === undefined || commentsList === null || commentsList.length === 0) return res.sendStatus(204);
 
     return res.status(200).send({
         commentsCount: commentsCount,
@@ -223,7 +250,7 @@ router.get("/:idx/comments", checkAuth({required: false}), checkValidity({[PARAM
 }));
 
 //게시물 댓글 생성
-router.post("/:idx/comments", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"], [COMMENT_CONTENT_REGEX]: ["content"]}), endRequestHandler(async(req, res, next) => {
+router.post("/:idx/comments", checkAuth(), checkValidity({ [PARAM_REGEX]: ["idx"], [COMMENT_CONTENT_REGEX]: ["content"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const postIdx = req.params.idx;
     const content = req.body.content;
@@ -237,28 +264,52 @@ router.post("/:idx/comments", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]
 }));
 
 //게시물 댓글 수정정
-router.put("/comments/:idx", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"], [COMMENT_CONTENT_REGEX]: ["content"]}), endRequestHandler(async(req, res, next) => {
+router.put("/comments/:idx", checkAuth(), checkValidity({ [PARAM_REGEX]: ["idx"], [COMMENT_CONTENT_REGEX]: ["content"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const commentIdx = req.params.idx;
     const content = req.body.content;
 
-    await psql.query(`UPDATE comment SET content = $1 
-        WHERE idx = $2 AND user_idx = $3;
-        `, [content, commentIdx, loginUser.idx]
-    );
+    // 기존: 본인 댓글만 수정
+    // await psql.query(`UPDATE comment SET content = $1 
+    //     WHERE idx = $2 AND user_idx = $3;
+    //     `, [content, commentIdx, loginUser.idx]
+    // );
+
+    // ✅ 변경: 관리자도 수정 가능
+    const target = await psql.query(`SELECT user_idx FROM comment WHERE idx = $1`, [commentIdx]);
+    if (target.rowCount === 0) return next(new NotFoundException());
+
+    const commentOwner = target.rows[0].user_idx;
+    if (commentOwner !== loginUser.idx && loginUser.rank !== 'manager') {
+        return next(new ForbiddenException("작성자만 수정할 수 있습니다."));
+    }
+
+    await psql.query(`UPDATE comment SET content = $1 WHERE idx = $2`, [content, commentIdx]);
 
     return res.sendStatus(201);
 }));
 
 //게시물 댓글 삭제
-router.delete("/comments/:idx", checkAuth(), checkValidity({[PARAM_REGEX]: ["idx"]}), endRequestHandler(async(req, res, next) => {
+router.delete("/comments/:idx", checkAuth(), checkValidity({ [PARAM_REGEX]: ["idx"] }), endRequestHandler(async (req, res, next) => {
     const loginUser = req.decoded;
     const commentIdx = req.params.idx;
 
-    await psql.query(`DELETE FROM comment 
-        WHERE idx = $1 AND user_idx = $2
-        `, [commentIdx, loginUser.idx]
-    );
+    // 기존: 본인 댓글만 삭제
+    // await psql.query(`DELETE FROM comment 
+    //     WHERE idx = $1 AND user_idx = $2
+    //     `, [commentIdx, loginUser.idx]
+    // );
+
+    // ✅ 변경: 관리자도 삭제 가능
+    const target = await psql.query(`SELECT user_idx FROM comment WHERE idx = $1`, [commentIdx]);
+    if (target.rowCount === 0) return next(new NotFoundException());
+
+    const commentOwner = target.rows[0].user_idx;
+    if (commentOwner !== loginUser.idx && loginUser.rank !== 'manager') {
+        return next(new ForbiddenException("작성자만 삭제할 수 있습니다."));
+    }
+
+    await psql.query(`DELETE FROM comment WHERE idx = $1`, [commentIdx]);
 
     return res.sendStatus(201);
 }));
